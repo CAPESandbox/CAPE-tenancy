@@ -1,6 +1,11 @@
 # CAPE-tenancy
 
+> [!WARNING]
+> **Experimental / Beta & Community-Maintained:**
+> Core CAPEv2 developers do **not** use Multi-Tenancy (`[multitenancy]`) or Central Mode (`[central_mode]`) in their own deployments. This repository is extracted out-of-tree to keep CAPEv2 core clean and is **community-driven**. Ongoing testing, maintenance, and bug fixes depend on the organizations and contributors who run these features in production.
+
 Out-of-tree Multi-Tenancy (`[multitenancy]`) and Central Mode (`[central_mode]` / `[centralstore]`) plugin for [CAPEv2](https://github.com/kevoreilly/CAPEv2).
+
 
 Designed following the same decoupling pattern as `CAPE-mcp` and `CAPE-parsers` so single-tenant CAPEv2 deployments remain completely free of tenancy schema migrations, `Task.to_dict()` field stripping, and per-view authorization boilerplate, while multi-tenant deployments run inside the **exact same CAPEv2 WebGUI**.
 
