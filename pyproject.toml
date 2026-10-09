@@ -1,0 +1,34 @@
+[tool.poetry]
+name = "CAPE-tenancy"
+version = "0.1.0"
+description = "Out-of-tree Multi-Tenancy and Central Mode plugin for CAPEv2"
+authors = ["Kevin O'Reilly <kev@capesandbox.com>", "doomedraven <doomedraven@capesandbox.com>"]
+license = "MIT"
+readme = "README.md"
+include = ["cape_tenancy/**"]
+keywords = ["cape", "sandbox", "multitenancy", "central-mode", "plugin"]
+packages = [{ include = "cape_tenancy" }]
+
+[tool.poetry.dependencies]
+python = ">=3.10, <4.0"
+sqlalchemy = ">=1.4"
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=7.2.2"
+pytest-mock = ">=3.7.0"
+ruff = ">=0.7.2"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+line-length = 132
+
+[tool.ruff.lint]
+select = ["F", "E", "W", "G"]
+ignore = ["E501", "E741", "E402"]
