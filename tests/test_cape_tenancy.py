@@ -249,7 +249,7 @@ def test_install_into_django_settings():
         "TEMPLATES": [{"BACKEND": "django.template.backends.django.DjangoTemplates", "OPTIONS": {"context_processors": []}}],
     }
     install(settings_dict, wrap_mongo=False)
-    assert "cape_tenancy.apps.CapeTenancyConfig" in settings_dict["INSTALLED_APPS"]
+    assert settings_dict["INSTALLED_APPS"][0] == "cape_tenancy.apps.CapeTenancyConfig"
     assert "cape_tenancy.middleware.TenancyMiddleware" in settings_dict["MIDDLEWARE"]
     assert (
         "cape_tenancy.context_processors.tenancy_context"
@@ -328,3 +328,74 @@ def test_batched_mongo_backfill():
         assert bulk_batches[1][0][1]["$set"]["info.visibility"] == PUBLIC
 
 
+def test_tasks_set_visibility_endpoint(monkeypatch):
+    from cape_tenancy.views import tasks_set_visibility
+
+    engine = create_engine("sqlite:///:memory:")
+    ensure_acl_schema(engine)
+    with Session(engine) as s:
+        set_task_acl(s, 42, user_id=10, tenant_id=2, visibility=PRIVATE)
+        s.commit()
+
+    def scope_loader(tid: int):
+        sess = Session(engine)
+        return sess, resolve_task_scope(sess, tid, fallback_user_id=10)
+
+    mongo_calls = []
+
+    def fake_mongo_update(col, flt, upd):
+        mongo_calls.append((col, flt, upd))
+
+    class FakeReq:
+        def __init__(self, viewer, visibility, method="POST"):
+            self.viewer = viewer
+            self.data = {"visibility": visibility}
+            self.method = method
+
+    # 1. MT disabled -> 400
+    monkeypatch.setattr(
+        "cape_tenancy.views.multitenancy_config",
+        lambda: cape_tenancy.MultitenancyConfig(enabled=False, mode="shared", default_visibility="", local_admins_manage_all_tenants=True),
+    )
+    owner = ViewerContext(user_id=10, tenant_id=2)
+    res_off = tasks_set_visibility(FakeReq(owner, TENANT), 42, scope_loader=scope_loader, mongo_update_one=fake_mongo_update)
+    assert res_off["status_code"] == 400
+
+    # 2. MT enabled -> stranger gets 404 on private task
+    monkeypatch.setattr(
+        "cape_tenancy.views.multitenancy_config",
+        lambda: cape_tenancy.MultitenancyConfig(enabled=True, mode="shared", default_visibility="", local_admins_manage_all_tenants=True),
+    )
+    stranger = ViewerContext(user_id=99, tenant_id=3)
+    res_404 = tasks_set_visibility(FakeReq(stranger, PUBLIC), 42, scope_loader=scope_loader, mongo_update_one=fake_mongo_update)
+    assert res_404["status_code"] == 404
+
+    # 3. Owner toggles private -> tenant -> 200 + CAS write
+    res_ok = tasks_set_visibility(FakeReq(owner, TENANT), 42, scope_loader=scope_loader, mongo_update_one=fake_mongo_update)
+    assert res_ok["status_code"] == 200
+    assert res_ok["data"] == {"task_id": 42, "visibility": TENANT}
+    assert len(mongo_calls) == 1
+
+    # 4. Same-tenant non-admin reader can read TENANT task (not 404), but gets 403 trying to toggle
+    peer = ViewerContext(user_id=11, tenant_id=2, is_tenant_admin=False)
+    res_403 = tasks_set_visibility(FakeReq(peer, PUBLIC), 42, scope_loader=scope_loader, mongo_update_one=fake_mongo_update)
+    assert res_403["status_code"] == 403
+
+
+def test_dispatch_central_view_when_enabled(monkeypatch):
+    from cape_tenancy.views import dispatch_central_view
+
+    class DummyCfg:
+        enabled = True
+
+    monkeypatch.setattr("cape_tenancy.central.config.central_mode_config", lambda: DummyCfg())
+    monkeypatch.setattr(
+        "cape_tenancy.central.views.central_pcapstream",
+        lambda req: {"central_dispatched": "pcapstream"},
+    )
+
+    def pcapstream(request, task_id, proto):
+        return {"upstream": True}
+
+    out = dispatch_central_view(object(), pcapstream, (), {"task_id": 1, "proto": "tcp"})
+    assert out == {"central_dispatched": "pcapstream"}

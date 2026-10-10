@@ -101,6 +101,13 @@ class TenancyMiddleware:
         request.viewer = viewer
         token = set_current_viewer(viewer)
         try:
+            from cape_tenancy.urls import match_visibility_task_id
+
+            vis_task_id = match_visibility_task_id(getattr(request, "path", "") or "")
+            if vis_task_id is not None:
+                from cape_tenancy.views import tasks_set_visibility
+
+                return tasks_set_visibility(request, vis_task_id, viewer_resolver=self.viewer_resolver)
             return self.get_response(request)
         finally:
             reset_current_viewer(token)
@@ -121,34 +128,35 @@ class TenancyMiddleware:
             viewer = self.viewer_resolver(getattr(request, "user", None))
             request.viewer = viewer
 
-        if viewer.see_all:
-            return None
-
-        # 1. Check task_id / analysis_id routes
-        for key in _TASK_ID_KWARGS:
-            if key in view_kwargs and view_kwargs[key] is not None:
-                try:
-                    task_id = int(view_kwargs[key])
-                except (TypeError, ValueError):
-                    return self.deny_response_factory(request, "Task not found")
-
-                if self.task_scope_resolver is not None:
-                    scope = self.task_scope_resolver(task_id)
-                    if scope is None:
+        if not viewer.see_all:
+            # 1. Check task_id / analysis_id routes
+            for key in _TASK_ID_KWARGS:
+                if key in view_kwargs and view_kwargs[key] is not None:
+                    try:
+                        task_id = int(view_kwargs[key])
+                    except (TypeError, ValueError):
                         return self.deny_response_factory(request, "Task not found")
-                    action = classify_view_action(getattr(request, "path", ""), view_func)
-                    allowed = self._check_action(viewer, scope, action)
-                    if not allowed:
-                        return self.deny_response_factory(request, "Task not found")
-                break
 
-        # 2. Check sample hash / sample_id routes
-        sample_Filter = {k: view_kwargs[k] for k in _SAMPLE_HASH_KWARGS if view_kwargs.get(k) is not None}
-        if sample_Filter and self.sample_access_checker is not None:
-            if not self.sample_access_checker(viewer, sample_Filter):
-                return self.deny_response_factory(request, "Sample not found in database")
+                    if self.task_scope_resolver is not None:
+                        scope = self.task_scope_resolver(task_id)
+                        if scope is None:
+                            return self.deny_response_factory(request, "Task not found")
+                        action = classify_view_action(getattr(request, "path", ""), view_func)
+                        allowed = self._check_action(viewer, scope, action)
+                        if not allowed:
+                            return self.deny_response_factory(request, "Task not found")
+                    break
 
-        return None
+            # 2. Check sample hash / sample_id routes
+            sample_Filter = {k: view_kwargs[k] for k in _SAMPLE_HASH_KWARGS if view_kwargs.get(k) is not None}
+            if sample_Filter and self.sample_access_checker is not None:
+                if not self.sample_access_checker(viewer, sample_Filter):
+                    return self.deny_response_factory(request, "Sample not found in database")
+
+        from cape_tenancy.views import dispatch_central_view
+
+        return dispatch_central_view(request, view_func, view_args, view_kwargs)
+
 
     @staticmethod
     def _check_action(viewer: ViewerContext, scope: ResourceScope, action: str) -> bool:
@@ -163,13 +171,16 @@ class TenancyMiddleware:
         path = getattr(request, "path", "") or ""
         is_api = path.startswith("/apiv2/") or path.startswith("/api/")
         try:
+            from django.conf import settings
             from django.http import HttpResponseNotFound, JsonResponse
 
-            if is_api:
-                return JsonResponse({"error": True, "error_value": message}, status=404)
-            return HttpResponseNotFound(message)
-        except ImportError:
-            return {"status_code": 404, "error": True, "error_value": message}
+            if settings.configured:
+                if is_api:
+                    return JsonResponse({"error": True, "error_value": message}, status=404)
+                return HttpResponseNotFound(message)
+        except Exception:
+            pass
+        return {"status_code": 404, "error": True, "error_value": message}
 
 
 def tenancy_exempt(view_func: Callable[..., Any]) -> Callable[..., Any]:

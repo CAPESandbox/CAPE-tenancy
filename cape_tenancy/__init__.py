@@ -59,6 +59,8 @@ from cape_tenancy.policy import (
     viewer_scope_es_filter,
     viewer_scope_match,
 )
+from cape_tenancy.urls import get_urlpatterns, match_visibility_task_id
+from cape_tenancy.views import dispatch_central_view, tasks_set_visibility
 
 __version__ = "0.1.0"
 
@@ -70,14 +72,14 @@ CONTEXT_PROCESSOR_PATH = "cape_tenancy.context_processors.tenancy_context"
 def install(settings_globals: MutableMapping[str, Any], *, wrap_mongo: bool = True) -> None:
     """Mount `cape_tenancy` into CAPEv2's Django `settings.py` / `local_settings.py` namespace.
 
-    1. Appends `cape_tenancy.apps.CapeTenancyConfig` to `INSTALLED_APPS`.
+    1. Prepends `cape_tenancy.apps.CapeTenancyConfig` to `INSTALLED_APPS` (for template override priority).
     2. Appends `cape_tenancy.middleware.TenancyMiddleware` to `MIDDLEWARE` (after AuthenticationMiddleware).
     3. Appends `cape_tenancy.context_processors.tenancy_context` to `TEMPLATES[*]['OPTIONS']['context_processors']`.
     4. Registers the MongoDB, SQLAlchemy, Elasticsearch, and Report hooks into `lib.cuckoo.common.hooks`.
     """
     installed_apps = list(settings_globals.get("INSTALLED_APPS", []))
     if APP_NAME not in installed_apps and "cape_tenancy" not in installed_apps:
-        installed_apps.append(APP_NAME)
+        installed_apps.insert(0, APP_NAME)
         settings_globals["INSTALLED_APPS"] = installed_apps
 
     middleware = list(settings_globals.get("MIDDLEWARE", []))
@@ -153,4 +155,8 @@ __all__ = [
     "default_sql_task_query_filter",
     "default_report_stamp_hook",
     "wrap_mongodb_module",
+    "tasks_set_visibility",
+    "dispatch_central_view",
+    "get_urlpatterns",
+    "match_visibility_task_id",
 ]
