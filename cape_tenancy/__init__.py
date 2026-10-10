@@ -32,7 +32,10 @@ from cape_tenancy.hooks import (
     apply_mongo_filters,
     default_es_query_filter,
     default_mongo_analysis_filter,
+    default_report_stamp_hook,
     default_sql_task_acl_clause,
+    default_sql_task_query_filter,
+    register_core_hooks,
     register_es_filter,
     register_mongo_filter,
     register_sql_filter,
@@ -70,7 +73,7 @@ def install(settings_globals: MutableMapping[str, Any], *, wrap_mongo: bool = Tr
     1. Appends `cape_tenancy.apps.CapeTenancyConfig` to `INSTALLED_APPS`.
     2. Appends `cape_tenancy.middleware.TenancyMiddleware` to `MIDDLEWARE` (after AuthenticationMiddleware).
     3. Appends `cape_tenancy.context_processors.tenancy_context` to `TEMPLATES[*]['OPTIONS']['context_processors']`.
-    4. Registers the default MongoDB query filter hook (and wraps `dev_utils.mongodb` if imported/available).
+    4. Registers the MongoDB, SQLAlchemy, Elasticsearch, and Report hooks into `lib.cuckoo.common.hooks`.
     """
     installed_apps = list(settings_globals.get("INSTALLED_APPS", []))
     if APP_NAME not in installed_apps and "cape_tenancy" not in installed_apps:
@@ -92,6 +95,7 @@ def install(settings_globals: MutableMapping[str, Any], *, wrap_mongo: bool = Tr
                 opts["context_processors"] = processors
 
     register_mongo_filter(default_mongo_analysis_filter)
+    register_core_hooks()
 
     if wrap_mongo:
         try:
@@ -138,6 +142,7 @@ __all__ = [
     "default_viewer_resolver",
     "classify_view_action",
     "tenancy_exempt",
+    "register_core_hooks",
     "register_mongo_filter",
     "register_sql_filter",
     "register_es_filter",
@@ -145,5 +150,7 @@ __all__ = [
     "default_mongo_analysis_filter",
     "default_es_query_filter",
     "default_sql_task_acl_clause",
+    "default_sql_task_query_filter",
+    "default_report_stamp_hook",
     "wrap_mongodb_module",
 ]

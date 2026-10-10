@@ -5,7 +5,7 @@ reimplementation. Each case: a viewer + a job + expected read/toggle outcome.
 Viewer/job tenants are small ints; None means "no tenant".
 """
 
-from lib.cuckoo.common.tenancy import Viewer, Job
+from cape_tenancy.policy import ResourceScope as Job, ViewerContext as Viewer
 
 # Visibility levels
 PUBLIC, TENANT, PRIVATE = "public", "tenant", "private"

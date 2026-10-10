@@ -167,3 +167,63 @@ def wrap_mongodb_module(mongodb_mod: Any) -> None:
         setattr(mongodb_mod, "mongo_aggregate", _wrapped_agg)
 
     _patched_modules.add(mod_id)
+
+
+def default_sql_task_query_filter(query: Any, viewer: Optional[ViewerContext] = None) -> Any:
+    """Apply `TaskAcl` outer-join and visibility clause to a SQLAlchemy `Task` query."""
+    active_viewer = viewer if viewer is not None else get_current_viewer()
+    if active_viewer is None or active_viewer.see_all:
+        return query
+    try:
+        from lib.cuckoo.core.data.task import Task
+    except ImportError:
+        return query
+    clause = default_sql_task_acl_clause(Task.id, Task.user_id, active_viewer)
+    if clause is None:
+        return query
+    return query.outerjoin(TaskAcl, TaskAcl.task_id == Task.id).filter(clause)
+
+
+def default_report_stamp_hook(results: Dict[str, Any]) -> None:
+    """Stamp `info.tenant_id`, `info.user_id`, `info.visibility`, and `info.visibility_seq` from `TaskAcl`."""
+    from cape_tenancy.policy import multitenancy_config
+
+    if not multitenancy_config().enabled:
+        return
+    info = results.get("info")
+    if not isinstance(info, dict):
+        return
+    task_id = info.get("id")
+    if task_id is None:
+        return
+    try:
+        from lib.cuckoo.core.database import Database
+
+        db = Database()
+        with db.session.begin():
+            row = db.session.get(TaskAcl, int(task_id))
+            if row is not None:
+                info["user_id"] = row.user_id
+                info["tenant_id"] = row.tenant_id
+                info["visibility"] = row.visibility
+                info["visibility_seq"] = int(row.visibility_seq or 1)
+            else:
+                info.setdefault("visibility", "private")
+                info.setdefault("visibility_seq", 0)
+    except Exception:
+        info.setdefault("visibility", "private")
+        info.setdefault("visibility_seq", 0)
+
+
+def register_core_hooks() -> bool:
+    """Register `cape_tenancy` Mongo, SQL, ES, and Report hooks into `lib.cuckoo.common.hooks`."""
+    try:
+        from lib.cuckoo.common import hooks as core_hooks
+    except ImportError:
+        return False
+
+    core_hooks.register_mongo_filter(lambda collection, query: default_mongo_analysis_filter(collection, query))
+    core_hooks.register_sql_task_filter(default_sql_task_query_filter)
+    core_hooks.register_es_filter(lambda body: default_es_query_filter(body))
+    core_hooks.register_report_hook(default_report_stamp_hook)
+    return True

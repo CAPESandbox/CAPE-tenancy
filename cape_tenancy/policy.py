@@ -165,22 +165,27 @@ def _as_bool(v, default: bool) -> bool:
     return bool(v)
 
 
-def multitenancy_config() -> MTConfig:
-    """Read the [multitenancy] section of cuckoo.conf (server-side policy)."""
+class _AbsentConfigSectionError(Exception):
+    """Sentinel raised when [multitenancy] is absent in cuckoo.conf."""
+
+
+def _load_multitenancy_section() -> dict:
     try:
         from lib.cuckoo.common.config import Config
         from lib.cuckoo.common.exceptions import CuckooOperationalError
     except ImportError:
-        return MTConfig(
-            enabled=False,
-            mode="shared",
-            default_visibility="",
-            local_admins_manage_all_tenants=True,
-        )
-
+        return {}
     try:
-        sec = Config("cuckoo").get("multitenancy")
-    except CuckooOperationalError:
+        return Config("cuckoo").get("multitenancy")
+    except CuckooOperationalError as exc:
+        raise _AbsentConfigSectionError(str(exc)) from exc
+
+
+def multitenancy_config() -> MTConfig:
+    """Read the [multitenancy] section of cuckoo.conf (server-side policy)."""
+    try:
+        sec = _load_multitenancy_section()
+    except _AbsentConfigSectionError:
         # [multitenancy] section absent => not configured => MT off. The legitimate
         # single-tenant default, NOT an error (Config.get raises this on a missing
         # section). This branch keeps single-tenant deployments working.

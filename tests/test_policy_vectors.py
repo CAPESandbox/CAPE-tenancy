@@ -87,7 +87,7 @@ def test_can_delete_orphan_owner_not_deletable_by_anon():
 
 
 def test_config_defaults():
-    from lib.cuckoo.common import tenancy
+    from cape_tenancy import policy as tenancy
     cfg = tenancy.multitenancy_config()
     assert cfg.enabled in (True, False)
     assert cfg.mode in ("shared", "locked")
@@ -97,7 +97,7 @@ def test_config_defaults():
 
 
 def test_default_visibility_per_mode():
-    from lib.cuckoo.common import tenancy
+    from cape_tenancy import policy as tenancy
     shared = tenancy.MTConfig(enabled=True, mode="shared", default_visibility="",
                               local_admins_manage_all_tenants=True)
     locked = tenancy.MTConfig(enabled=True, mode="locked", default_visibility="",
@@ -109,7 +109,7 @@ def test_default_visibility_per_mode():
 def test_disabled_is_legacy_open():
     """With multitenancy disabled, default visibility is public and a legacy
     NULL-tenant public task is visible to anyone (current single-tenant behavior)."""
-    from lib.cuckoo.common import tenancy
+    from cape_tenancy import policy as tenancy
     cfg = tenancy.MTConfig(enabled=False, mode="shared", default_visibility="",
                            local_admins_manage_all_tenants=True)
     assert tenancy.default_visibility(cfg) == "public"
@@ -151,7 +151,7 @@ def test_scope_match_none_viewer():
 # ── Adversarial-review regressions (2026-07-13): mongo-side fail-open ──
 
 def _mtcfg(mode, enabled=True):
-    from lib.cuckoo.common import tenancy
+    from cape_tenancy import policy as tenancy
     return tenancy.MTConfig(enabled=enabled, mode=mode, default_visibility="",
                             local_admins_manage_all_tenants=True)
 
@@ -161,7 +161,7 @@ def test_viewer_scope_match_scopes_in_shared_mode(monkeypatch):
     to public OR own-tenant TENANT OR mine. A private/other-tenant analysis must
     not leak via search/compare/stats/hunt. Previously shared mode returned None
     (see-all) while can_read enforced private in all modes."""
-    from lib.cuckoo.common import tenancy
+    from cape_tenancy import policy as tenancy
     monkeypatch.setattr(tenancy, "multitenancy_config", lambda: _mtcfg("shared"))
     m = tenancy.viewer_scope_match(tenancy.Viewer(user_id=7, tenant_id=10))
     assert m is not None, "shared mode must scope, not return see-all None"
@@ -173,7 +173,7 @@ def test_viewer_scope_match_scopes_in_shared_mode(monkeypatch):
 
 def test_viewer_scope_es_filter_scopes_in_shared_mode(monkeypatch):
     """Finding #2 (ES analogue): shared-mode ES filter must scope, not be None."""
-    from lib.cuckoo.common import tenancy
+    from cape_tenancy import policy as tenancy
     monkeypatch.setattr(tenancy, "multitenancy_config", lambda: _mtcfg("shared"))
     f = tenancy.viewer_scope_es_filter(tenancy.Viewer(user_id=7, tenant_id=10))
     assert f is not None, "shared-mode ES filter must scope, not None"
@@ -182,21 +182,21 @@ def test_viewer_scope_es_filter_scopes_in_shared_mode(monkeypatch):
 
 def test_viewer_scope_still_scopes_in_locked_mode(monkeypatch):
     """Locked mode keeps scoping (no regression)."""
-    from lib.cuckoo.common import tenancy
+    from cape_tenancy import policy as tenancy
     monkeypatch.setattr(tenancy, "multitenancy_config", lambda: _mtcfg("locked"))
     assert tenancy.viewer_scope_match(tenancy.Viewer(user_id=7, tenant_id=10)) is not None
 
 
 def test_viewer_scope_none_when_disabled(monkeypatch):
     """MT disabled -> no filter (legacy see-all), unchanged."""
-    from lib.cuckoo.common import tenancy
+    from cape_tenancy import policy as tenancy
     monkeypatch.setattr(tenancy, "multitenancy_config", lambda: _mtcfg("shared", enabled=False))
     assert tenancy.viewer_scope_match(tenancy.Viewer(user_id=7, tenant_id=10)) is None
 
 
 def test_local_admin_breakglass_still_sees_all(monkeypatch):
     """Break-glass local admin keeps global visibility in any enabled mode."""
-    from lib.cuckoo.common import tenancy
+    from cape_tenancy import policy as tenancy
     monkeypatch.setattr(tenancy, "multitenancy_config", lambda: _mtcfg("shared"))
     v = tenancy.Viewer(user_id=1, tenant_id=None, is_superuser=True, is_local_admin=True)
     assert tenancy.viewer_scope_match(v) is None
@@ -204,30 +204,26 @@ def test_local_admin_breakglass_still_sees_all(monkeypatch):
 
 
 def _patch_conf(monkeypatch, mode):
-    from lib.cuckoo.common import config as _cfgmod
+    from cape_tenancy import policy as tenancy
 
-    class _FakeConf:
-        def __init__(self, name):
-            pass
-
-        def get(self, section):
-            return {"enabled": True, "mode": mode, "default_visibility": "",
-                    "local_admins_manage_all_tenants": True}
-
-    monkeypatch.setattr(_cfgmod, "Config", _FakeConf)
+    monkeypatch.setattr(
+        tenancy,
+        "_load_multitenancy_section",
+        lambda: {"enabled": True, "mode": mode, "default_visibility": "", "local_admins_manage_all_tenants": True},
+    )
 
 
 def test_unknown_mode_fails_closed_to_locked(monkeypatch):
     """Finding #6: an invalid/typo mode must not silently disable scoping; it must
     fail closed to locked (the more restrictive mode)."""
-    from lib.cuckoo.common import tenancy
+    from cape_tenancy import policy as tenancy
     _patch_conf(monkeypatch, "bogusmode")
     assert tenancy.multitenancy_config().mode == "locked"
 
 
 def test_known_modes_normalized(monkeypatch):
     """Finding #6: valid modes preserved, case/whitespace-normalized."""
-    from lib.cuckoo.common import tenancy
+    from cape_tenancy import policy as tenancy
     for raw, want in (("shared", "shared"), ("locked", "locked"),
                       ("LOCKED", "locked"), (" Shared ", "shared")):
         _patch_conf(monkeypatch, raw)
@@ -238,55 +234,40 @@ def test_absent_section_is_mt_off(monkeypatch):
     """A merely-absent [multitenancy] section (Config.get raises CuckooOperationalError)
     is the legitimate single-tenant default: MT OFF. Must NOT fail closed / lock out a
     single-tenant deployment that never configured the section."""
-    from lib.cuckoo.common import config as _cfgmod
-    from lib.cuckoo.common.exceptions import CuckooOperationalError
-    from lib.cuckoo.common import tenancy
+    from cape_tenancy import policy as tenancy
 
-    class _AbsentConf:
-        def __init__(self, name):
-            pass
+    def _absent():
+        raise tenancy._AbsentConfigSectionError("Option multitenancy is not found in configuration")
 
-        def get(self, section):
-            raise CuckooOperationalError("Option multitenancy is not found in configuration")
-    monkeypatch.setattr(_cfgmod, "Config", _AbsentConf)
+    monkeypatch.setattr(tenancy, "_load_multitenancy_section", _absent)
     assert tenancy.multitenancy_config().enabled is False
 
 
 def test_config_read_error_fails_closed(monkeypatch):
     """A genuinely unreadable [multitenancy] (parse/IO error — NOT a merely-absent
-    section) must fail CLOSED: MT enabled + locked, never silently disable isolation.
-    Mirrors test_unknown_mode_fails_closed_to_locked + the backfill node-role guard —
-    an unreadable policy config never degrades to the permissive (MT-off) branch."""
-    from lib.cuckoo.common import config as _cfgmod
-    from lib.cuckoo.common import tenancy
+    section) must fail CLOSED: MT enabled + locked, never silently disable isolation."""
+    from cape_tenancy import policy as tenancy
 
-    class _BoomConf:
-        def __init__(self, name):
-            pass
+    def _boom():
+        raise RuntimeError("cuckoo.conf parse error")
 
-        def get(self, section):
-            raise RuntimeError("cuckoo.conf parse error")
-    monkeypatch.setattr(_cfgmod, "Config", _BoomConf)
+    monkeypatch.setattr(tenancy, "_load_multitenancy_section", _boom)
     cfg = tenancy.multitenancy_config()
     assert cfg.enabled is True and cfg.mode == "locked", (
         f"config-read error must fail closed (enabled+locked), got {cfg}")
-    # fail closed on EVERY knob: local_admins_manage_all_tenants=False is the restrictive
-    # value (don't hand a local superuser full break-glass on the fail-closed path).
     assert cfg.local_admins_manage_all_tenants is False, (
         f"fail-closed must be restrictive on local_admins_manage_all_tenants, got {cfg}")
 
 
 def test_failclosed_default_visibility_is_private(monkeypatch):
     """Fail-closed sentinel (unreadable config) must resolve the submit default to the
-    MOST restrictive PRIVATE — default_visibility="" would fall through to TENANT under
-    mode=locked, widening exposure during a config outage."""
-    from lib.cuckoo.common import config as _cfgmod
-    from lib.cuckoo.common import tenancy
+    MOST restrictive PRIVATE."""
+    from cape_tenancy import policy as tenancy
 
-    class _Boom:
-        def __init__(self, name):
-            raise ValueError("simulated corrupt cuckoo.conf")
-    monkeypatch.setattr(_cfgmod, "Config", _Boom)
+    def _boom():
+        raise ValueError("simulated corrupt cuckoo.conf")
+
+    monkeypatch.setattr(tenancy, "_load_multitenancy_section", _boom)
     cfg = tenancy.multitenancy_config()
     assert cfg.enabled is True and cfg.mode == "locked"
     assert tenancy.default_visibility(cfg) == tenancy.PRIVATE, (
@@ -295,41 +276,29 @@ def test_failclosed_default_visibility_is_private(monkeypatch):
 
 def test_typo_default_visibility_fails_closed(monkeypatch):
     """An explicitly-set but unrecognized default_visibility (typo/artifact) must fail
-    CLOSED to private — never fall open to the widest per-mode default (PUBLIC in shared),
-    which is what the sibling `mode` knob already does on unknown values."""
-    from lib.cuckoo.common import config as _cfgmod
-    from lib.cuckoo.common import tenancy
+    CLOSED to private."""
+    from cape_tenancy import policy as tenancy
 
-    class _Conf:
-        def __init__(self, name):
-            pass
-
-        def get(self, section):
-            return {"enabled": True, "mode": "shared", "default_visibility": "privte",
-                    "local_admins_manage_all_tenants": True}
-    monkeypatch.setattr(_cfgmod, "Config", _Conf)
+    monkeypatch.setattr(
+        tenancy,
+        "_load_multitenancy_section",
+        lambda: {"enabled": True, "mode": "shared", "default_visibility": "privte", "local_admins_manage_all_tenants": True},
+    )
     cfg = tenancy.multitenancy_config()
     assert tenancy.default_visibility(cfg) == tenancy.PRIVATE, (
         f"unrecognized default_visibility must fail closed to private, got {tenancy.default_visibility(cfg)!r}")
 
 
 def test_default_visibility_normalized(monkeypatch):
-    """default_visibility must be case/whitespace-normalized like `mode` — otherwise a
-    'Private'/' private ' misparse fails the exact `in VISIBILITIES` check and silently
-    WIDENS to the per-mode default (PUBLIC in shared)."""
-    from lib.cuckoo.common import config as _cfgmod
-    from lib.cuckoo.common import tenancy
+    """default_visibility must be case/whitespace-normalized like `mode`."""
+    from cape_tenancy import policy as tenancy
 
     for raw, want in ((" Private ", "private"), ("PUBLIC", "public"), ("Tenant", "tenant")):
-        class _Conf:
-            def __init__(self, name):
-                pass
-
-            def get(self, section):
-                return {"enabled": True, "mode": "shared", "default_visibility": raw,
-                        "local_admins_manage_all_tenants": True}
-        monkeypatch.setattr(_cfgmod, "Config", _Conf)
+        monkeypatch.setattr(
+            tenancy,
+            "_load_multitenancy_section",
+            lambda r=raw: {"enabled": True, "mode": "shared", "default_visibility": r, "local_admins_manage_all_tenants": True},
+        )
         cfg = tenancy.multitenancy_config()
         assert cfg.default_visibility == want, f"default_visibility {raw!r} -> {cfg.default_visibility!r}"
-        # and it now resolves through default_visibility() instead of falling back
         assert tenancy.default_visibility(cfg) == want
